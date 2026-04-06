@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xdrive"
+version = "0.1.0"
+description = "X11 window manager automation and testing framework"
+requires-python = ">=3.10"
+dependencies = [
+    "python-xlib>=0.33",
+    "Pillow>=10.0",
+    "pytest>=7.0",
+]
+
+[project.entry-points.pytest11]
+xdrive = "xdrive.conftest"
+
+[tool.setuptools.packages.find]
+include = ["xdrive*"]
