@@ -16,7 +16,21 @@ if TYPE_CHECKING:
 
 @dataclass
 class UINode:
-    """A node in the UI tree."""
+    """A single node in the X11 window hierarchy snapshot.
+
+    Each node corresponds to a mapped X window and carries its
+    geometry, key properties, and pointers to parent/children.
+
+    Attributes:
+        xid: X11 window ID.
+        geometry: Position and size as a :class:`~xdrive.geometry.Geometry`.
+        properties: Dictionary of extracted X properties
+            (``wm_name``, ``wm_class``, ``_NET_WM_STATE``, etc.).
+        children: Child :class:`UINode` list.
+        parent: Parent node, or ``None`` for the root.
+        node_type: Role string: ``'root'``, ``'frame'``, ``'client'``,
+            or ``''`` (unknown).
+    """
 
     xid: int
     geometry: Geometry
@@ -27,6 +41,11 @@ class UINode:
 
     @property
     def frame(self) -> UINode | None:
+        """Return the frame node for this window, or ``None``.
+
+        If this node **is** a frame, returns *self*.  If the parent is
+        a frame, returns the parent.
+        """
         if self.node_type == "frame":
             return self
         if self.parent and self.parent.node_type == "frame":
@@ -35,6 +54,10 @@ class UINode:
 
     @property
     def client(self) -> UINode | None:
+        """Return the client child of this node, or ``None``.
+
+        If this node itself is a client, returns *self*.
+        """
         if self.node_type == "client":
             return self
         for child in self.children:
@@ -48,7 +71,21 @@ class UINode:
 
 
 class UITree:
-    """Semantic snapshot of the full X11/WM state as a traversable tree."""
+    """Immutable snapshot of the X11 window hierarchy.
+
+    Built by :func:`build_ui_tree`, the tree allows querying client
+    windows, finding nodes by property, and diffing two snapshots to
+    detect layout changes.
+
+    Args:
+        root: The root :class:`UINode`.
+        all_nodes: Flat list of every node in the tree.
+
+    Example:
+        >>> tree = xd.ui_tree()
+        >>> for node in tree.windows():
+        ...     print(node)
+    """
 
     def __init__(self, root: UINode, all_nodes: list[UINode]):
         self._root = root
@@ -56,14 +93,22 @@ class UITree:
 
     @property
     def root(self) -> UINode:
+        """The root window node."""
         return self._root
 
     def windows(self) -> list[UINode]:
-        """Return all client window nodes."""
+        """Return all nodes whose ``node_type`` is ``'client'``.
+
+        Returns:
+            List of :class:`UINode` representing client windows.
+        """
         return [n for n in self._all_nodes if n.node_type == "client"]
 
     def focused(self) -> UINode | None:
-        """Return the focused window node, if any."""
+        """Return the focused client node, or ``None``.
+
+        Checks for ``_NET_WM_STATE_FOCUSED`` in each node's properties.
+        """
         for node in self._all_nodes:
             state = node.properties.get("_NET_WM_STATE", [])
             if "_NET_WM_STATE_FOCUSED" in state:
@@ -73,7 +118,15 @@ class UITree:
     def find(
         self, *, wm_class: str | None = None, title: str | None = None
     ) -> UINode | None:
-        """Find a node by wm_class or title."""
+        """Find the first node matching *wm_class* or *title*.
+
+        Args:
+            wm_class: Match against the ``wm_class`` property.
+            title: Match against ``wm_name`` or ``title`` properties.
+
+        Returns:
+            The first matching :class:`UINode`, or ``None``.
+        """
         for node in self._all_nodes:
             if wm_class and node.properties.get("wm_class") == wm_class:
                 return node
@@ -84,7 +137,15 @@ class UITree:
         return None
 
     def diff(self, other: UITree) -> UITreeDiff:
-        """Compare two UI tree snapshots and return the differences."""
+        """Compute the differences between this snapshot and *other*.
+
+        Args:
+            other: A newer :class:`UITree` snapshot.
+
+        Returns:
+            A :class:`UITreeDiff` with added, removed, and changed
+            nodes.
+        """
         before_map = {n.xid: n for n in self._all_nodes}
         after_map = {n.xid: n for n in other._all_nodes}
 
@@ -106,6 +167,15 @@ class UITree:
 
 @dataclass
 class UITreeDiff:
+    """Result of comparing two :class:`UITree` snapshots.
+
+    Attributes:
+        added: Nodes present in the newer tree but not the older.
+        removed: Nodes present in the older tree but not the newer.
+        changed: List of ``(before, after)`` pairs for nodes whose
+            geometry or properties differ.
+    """
+
     added: list[UINode]
     removed: list[UINode]
     changed: list[tuple[UINode, UINode]]  # (before, after)
@@ -119,7 +189,18 @@ class UITreeDiff:
 
 
 def build_ui_tree(display: Display) -> UITree:
-    """Build a UI tree from the current display state."""
+    """Build a :class:`UITree` snapshot from the current display state.
+
+    Walks the X11 window hierarchy starting from the root, classifying
+    each mapped window as ``'frame'`` or ``'client'`` based on
+    ``_NET_CLIENT_LIST``.
+
+    Args:
+        display: An open ``Xlib.display.Display`` connection.
+
+    Returns:
+        A :class:`UITree` containing all mapped windows.
+    """
     root_xwin = display.screen().root
     all_nodes: list[UINode] = []
 
@@ -154,7 +235,18 @@ def build_ui_tree(display: Display) -> UITree:
 
 
 def _get_window_properties(display: Display, xwin) -> dict:
-    """Extract key properties from an X window."""
+    """Extract commonly used X properties from a window.
+
+    Reads ``_NET_WM_NAME``, ``WM_NAME``, ``WM_CLASS``,
+    ``_NET_WM_STATE``, and ``_NET_WM_WINDOW_TYPE``.
+
+    Args:
+        display: An open ``Xlib.display.Display``.
+        xwin: An ``Xlib`` window object.
+
+    Returns:
+        A dict of property name → value mappings.
+    """
     props = {}
 
     # WM_NAME

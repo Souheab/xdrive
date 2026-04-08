@@ -24,14 +24,22 @@ from .window import Window
 class XDrive:
     """Main controller for X11 window manager automation.
 
-    Usage:
-        # Connect to an existing display
-        with XDrive(wm="./mywm", display=":0") as xd:
-            ...
+    ``XDrive`` connects to an X display (real or virtual), optionally
+    starts a window manager, and exposes helpers for creating windows,
+    injecting input, and taking screenshots.
 
-        # Spin up a virtual display
-        with XDrive(wm="./mywm", virtual=True, screen_size=(1920, 1080)) as xd:
-            ...
+    Args:
+        wm: Shell command to start the window manager.  ``None`` to
+            skip WM launch.
+        display: An existing ``VirtualDisplay``, a DISPLAY string
+            (e.g. ``':0'``), or ``None`` to read ``$DISPLAY``.
+        virtual: If ``True``, spin up a private Xvfb display.
+        screen_size: ``(width, height)`` to use when *virtual* is
+            ``True``.
+
+    Example:
+        >>> with XDrive(wm="./mywm", virtual=True) as xd:
+        ...     win = xd.new_window(title="test")
     """
 
     def __init__(
@@ -105,16 +113,34 @@ class XDrive:
 
     @property
     def mouse(self) -> Mouse:
+        """The :class:`~xdrive.mouse.Mouse` input controller.
+
+        Raises:
+            AssertionError: If ``XDrive`` has not been entered as a
+                context manager.
+        """
         assert self._mouse is not None, "XDrive not connected"
         return self._mouse
 
     @property
     def keyboard(self) -> Keyboard:
+        """The :class:`~xdrive.keyboard.Keyboard` input controller.
+
+        Raises:
+            AssertionError: If ``XDrive`` has not been entered as a
+                context manager.
+        """
         assert self._keyboard is not None, "XDrive not connected"
         return self._keyboard
 
     @property
     def screen(self) -> Screen:
+        """The :class:`~xdrive.screen.Screen` state accessor.
+
+        Raises:
+            AssertionError: If ``XDrive`` has not been entered as a
+                context manager.
+        """
         assert self._screen is not None, "XDrive not connected"
         return self._screen
 
@@ -125,7 +151,25 @@ class XDrive:
         position: tuple[int, int] | None = None,
         type: str | None = None,
     ) -> Window:
-        """Create a synthetic X11 test window."""
+        """Create and map a synthetic X11 test window.
+
+        The window is fully mapped (and waited on) before returning.
+        It sets ``WM_NAME``, ``_NET_WM_NAME``, ``WM_PROTOCOLS
+        (WM_DELETE_WINDOW)``, and optionally ``_NET_WM_WINDOW_TYPE``.
+
+        Args:
+            title: Window title.
+            size: ``(width, height)`` in pixels.
+            position: ``(x, y)`` position, or ``None`` for the default.
+            type: EWMH window type shorthand (``'dialog'``,
+                ``'splash'``, ``'dock'``, etc.).
+
+        Returns:
+            A :class:`~xdrive.window.Window` instance.
+
+        Example:
+            >>> win = xd.new_window(title="hello", size=(400, 300))
+        """
         root = self._xdisplay.screen().root
         screen = self._xdisplay.screen()
 
@@ -221,7 +265,23 @@ class XDrive:
         return win
 
     def launch(self, command: str) -> Window:
-        """Launch a real application and return its window."""
+        """Launch a real application and return its first new window.
+
+        Sets ``DISPLAY`` in the child process environment and waits
+        up to 10 seconds for a new window to appear.
+
+        Args:
+            command: Shell command to execute.
+
+        Returns:
+            The newly created :class:`~xdrive.window.Window`.
+
+        Raises:
+            RuntimeError: If no new window appears within the timeout.
+
+        Example:
+            >>> win = xd.launch("xterm")
+        """
         before_windows = set(w.id for w in self.screen.windows())
 
         env = os.environ.copy()
@@ -256,7 +316,21 @@ class XDrive:
         path: str | None = None,
         region: tuple[int, int, int, int] | None = None,
     ) -> Image.Image:
-        """Take a screenshot of the entire display or a region."""
+        """Capture a screenshot of the root window (full display).
+
+        Reads the root window pixmap in ZPixmap/BGRX format and
+        converts to an RGB PIL ``Image``.
+
+        Args:
+            path: If given, save the image to this file path.
+            region: Optional ``(x, y, width, height)`` sub-region.
+
+        Returns:
+            A PIL ``Image.Image`` in RGB mode.
+
+        Example:
+            >>> img = xd.screenshot("output/full.png")
+        """
         root = self._xdisplay.screen().root
         geo = root.get_geometry()
 
@@ -274,7 +348,12 @@ class XDrive:
         return image
 
     def ui_tree(self):
-        """Build and return a UI tree snapshot."""
+        """Build and return a :class:`~xdrive.ui_tree.UITree` snapshot.
+
+        Returns:
+            A :class:`~xdrive.ui_tree.UITree` representing the current
+            X11 window hierarchy.
+        """
         return build_ui_tree(self._xdisplay)
 
     def wait_for(
@@ -282,9 +361,21 @@ class XDrive:
         condition,
         timeout: float = 5.0,
     ) -> None:
-        """Wait for a condition to become true.
+        """Wait for a condition to become truthy.
 
-        condition can be a callable or a property that evaluates to bool.
+        Polls *condition* (a callable or value) with a short interval
+        until it evaluates to ``True`` or the timeout expires.
+
+        Args:
+            condition: A zero-argument callable returning a bool, or
+                any value that will be tested for truthiness.
+            timeout: Maximum wait time in seconds.
+
+        Raises:
+            TimeoutError: If the condition is not met.
+
+        Example:
+            >>> xd.wait_for(lambda: win.is_mapped, timeout=3.0)
         """
         if callable(condition):
             wait_for_condition(condition, timeout=timeout)
@@ -298,11 +389,28 @@ class XDrive:
         window: Window | None = None,
         timeout: float = 5.0,
     ) -> None:
-        """Wait for a specific X11 event."""
+        """Wait for a named X11 event on the display connection.
+
+        Args:
+            event_name: X11 event name (e.g. ``'MapNotify'``).
+            window: Restrict to events for this window.
+            timeout: Maximum wait time in seconds.
+
+        Raises:
+            TimeoutError: If the event is not received in time.
+        """
         wait_for_x_event(self._xdisplay, event_name, window=window, timeout=timeout)
 
     def wait_for_layout(self, timeout: float = 3.0) -> None:
-        """Wait for layout to stabilize (no ConfigureNotify events for a period)."""
+        """Wait for layout to stabilise.
+
+        Sleeps briefly and drains all pending X events, giving the
+        window manager time to finish processing ``ConfigureNotify``
+        and related layout events.
+
+        Args:
+            timeout: Not actively polled; reserved for future use.
+        """
         time.sleep(0.5)
         # Drain any pending events
         while self._xdisplay.pending_events():
@@ -310,7 +418,16 @@ class XDrive:
 
     @contextlib.contextmanager
     def record_events(self):
-        """Context manager to record X11 events."""
+        """Context manager that records X11 events for later assertion.
+
+        Yields an :class:`~xdrive.events.EventRecorder`.  Recording
+        starts on entry and stops on exit.
+
+        Example:
+            >>> with xd.record_events() as rec:
+            ...     win = xd.new_window()
+            >>> rec.assert_received("MapNotify")
+        """
         recorder = EventRecorder(self._xdisplay)
         recorder.start()
         try:

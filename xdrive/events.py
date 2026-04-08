@@ -45,7 +45,15 @@ _EVENT_NAME_MAP = {v: k for k, v in _EVENT_TYPE_MAP.items()}
 
 @dataclass
 class RecordedEvent:
-    """A recorded X11 event."""
+    """A recorded X11 event captured by :class:`EventRecorder`.
+
+    Attributes:
+        name: Human-readable event name (e.g. ``'MapNotify'``).
+        event_type: Integer X11 event type constant.
+        window_id: X11 window ID the event was delivered to, or ``None``.
+        timestamp: Monotonic timestamp (``time.monotonic()``) when the
+            event was captured.
+    """
 
     name: str
     event_type: int
@@ -54,7 +62,20 @@ class RecordedEvent:
 
 
 class EventRecorder:
-    """Records X11 events during a context for later assertion."""
+    """Record X11 events in a background thread for later assertion.
+
+    Used via :meth:`XDrive.record_events` as a context manager.  While
+    recording, a daemon thread polls ``display.pending_events()`` and
+    stores each event as a :class:`RecordedEvent`.
+
+    Args:
+        display: An open ``Xlib.display.Display`` connection.
+
+    Example:
+        >>> with xd.record_events() as rec:
+        ...     win = xd.new_window()
+        >>> rec.assert_received("MapNotify")
+    """
 
     def __init__(self, display: Display):
         self._display = display
@@ -84,12 +105,14 @@ class EventRecorder:
                 time.sleep(0.01)
 
     def start(self):
+        """Begin recording events in a background thread."""
         self._recording = True
         self._events = []
         self._thread = threading.Thread(target=self._record_loop, daemon=True)
         self._thread.start()
 
     def stop(self):
+        """Stop the recording thread and wait for it to exit."""
         self._recording = False
         if self._thread:
             self._thread.join(timeout=1.0)
@@ -97,10 +120,23 @@ class EventRecorder:
 
     @property
     def events(self) -> list[RecordedEvent]:
+        """Return a snapshot of all recorded events so far."""
         return list(self._events)
 
     def assert_order(self, event_names: list[str]) -> None:
-        """Assert that the given events occurred in the specified order."""
+        """Assert that events occurred in the given order.
+
+        Each event name must appear after the previous one in the
+        recording.  Extra events between them are allowed.
+
+        Args:
+            event_names: Ordered list of X11 event names
+                (e.g. ``['MapNotify', 'ConfigureNotify']``).
+
+        Raises:
+            AssertionError: If the ordering is violated or an event
+                is missing.
+        """
         recorded_names = [e.name for e in self._events]
         indices = []
         for name in event_names:
@@ -117,13 +153,27 @@ class EventRecorder:
                 )
 
     def assert_received(self, event_name: str) -> None:
-        """Assert that a specific event was received."""
+        """Assert that a specific X11 event was recorded.
+
+        Args:
+            event_name: Event name such as ``'MapNotify'``.
+
+        Raises:
+            AssertionError: If the event was not found.
+        """
         names = [e.name for e in self._events]
         if event_name not in names:
             raise AssertionError(f"Event {event_name!r} not received. Got: {names}")
 
     def assert_not_received(self, event_name: str) -> None:
-        """Assert that a specific event was NOT received."""
+        """Assert that a specific X11 event was **not** recorded.
+
+        Args:
+            event_name: Event name such as ``'DestroyNotify'``.
+
+        Raises:
+            AssertionError: If the event was found.
+        """
         names = [e.name for e in self._events]
         if event_name in names:
             raise AssertionError(
@@ -136,7 +186,20 @@ def wait_for_condition(
     timeout: float = 5.0,
     poll_interval: float = 0.05,
 ) -> None:
-    """Wait for a condition to become true."""
+    """Poll a callable until it returns ``True`` or the timeout expires.
+
+    Args:
+        condition: A zero-argument callable that returns a boolean.
+        timeout: Maximum time to wait in seconds.
+        poll_interval: Seconds between successive polls.
+
+    Raises:
+        TimeoutError: If *condition* does not return ``True`` within
+            *timeout* seconds.
+
+    Example:
+        >>> wait_for_condition(lambda: win.is_mapped, timeout=3.0)
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -154,7 +217,26 @@ def wait_for_x_event(
     window: Window | None = None,
     timeout: float = 5.0,
 ) -> RecordedEvent | None:
-    """Wait for a specific X11 event."""
+    """Block until a specific X11 event is received.
+
+    Events are consumed from the display connection until one matching
+    *event_name* (and optionally *window*) is found.
+
+    Args:
+        display: An open ``Xlib.display.Display``.
+        event_name: Name of the event to wait for (e.g.
+            ``'MapNotify'``).
+        window: If given, only events targeting this window or its
+            frame are accepted.
+        timeout: Maximum wait time in seconds.
+
+    Returns:
+        The matching :class:`RecordedEvent`.
+
+    Raises:
+        ValueError: If *event_name* is not a known X11 event type.
+        TimeoutError: If the event is not received in time.
+    """
     target_type = _EVENT_TYPE_MAP.get(event_name)
     if target_type is None:
         raise ValueError(f"Unknown event type: {event_name!r}")

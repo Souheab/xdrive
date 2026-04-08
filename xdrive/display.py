@@ -8,7 +8,24 @@ import time
 
 
 class VirtualDisplay:
-    """Wraps Xvfb to provide isolated virtual X11 displays for testing."""
+    """Manage an Xvfb virtual X11 display for headless testing.
+
+    Launches an `Xvfb` process on an automatically chosen free display
+    number and tears it down on exit.  Designed for use as a context
+    manager.
+
+    Args:
+        width: Framebuffer width in pixels.
+        height: Framebuffer height in pixels.
+        depth: Colour depth (bits per pixel).
+        screens: Optional list of ``(width, height)`` tuples to create
+            multiple X screens.  When provided, *width* and *height* are
+            taken from the first entry.
+
+    Example:
+        >>> with VirtualDisplay(width=1280, height=720) as vd:
+        ...     print(vd.name)  # e.g. ':99'
+    """
 
     def __init__(
         self,
@@ -27,24 +44,39 @@ class VirtualDisplay:
 
     @property
     def name(self) -> str:
+        """The DISPLAY string (e.g. ``':99'``).
+
+        Raises:
+            RuntimeError: If the display has not been started yet.
+        """
         if self._name is None:
             raise RuntimeError("Display not started")
         return self._name
 
     @property
     def width(self) -> int:
+        """Framebuffer width in pixels."""
         return self._width
 
     @property
     def height(self) -> int:
+        """Framebuffer height in pixels."""
         return self._height
 
     @property
     def is_running(self) -> bool:
+        """``True`` if the Xvfb process is alive."""
         return self._process is not None and self._process.poll() is None
 
     def _find_free_display(self) -> int:
-        """Find an unused display number."""
+        """Find an unused display number by scanning ``/tmp/.X*-lock`` files.
+
+        Returns:
+            An integer display number in the range 99–199.
+
+        Raises:
+            RuntimeError: If every number in the range is already taken.
+        """
         for num in range(99, 200):
             lock_file = f"/tmp/.X{num}-lock"
             socket_file = f"/tmp/.X11-unix/X{num}"
@@ -53,6 +85,16 @@ class VirtualDisplay:
         raise RuntimeError("Could not find a free display number")
 
     def start(self) -> "VirtualDisplay":
+        """Launch the Xvfb process and wait for it to become ready.
+
+        Returns:
+            *self*, so the method can be chained or used without a context
+            manager.
+
+        Raises:
+            RuntimeError: If a display is already running, Xvfb exits
+                prematurely, or the server does not start within 5 seconds.
+        """
         if self._process is not None:
             raise RuntimeError("Display already started")
 
@@ -92,6 +134,11 @@ class VirtualDisplay:
         raise RuntimeError("Xvfb did not start in time")
 
     def stop(self) -> None:
+        """Terminate the Xvfb process.
+
+        Sends ``SIGTERM`` and waits up to 5 seconds before falling back to
+        ``SIGKILL``.
+        """
         if self._process is not None:
             self._process.send_signal(signal.SIGTERM)
             try:

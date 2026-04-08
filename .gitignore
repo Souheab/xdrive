@@ -1,3 +1,4 @@
 xdrive.egg-info/
 __pycache__/
 examples/output/
+docs/_build/

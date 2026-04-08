@@ -15,19 +15,44 @@ if TYPE_CHECKING:
 
 
 class Screen:
-    """Provides queries about the current screen/display state."""
+    """Query the state of the X11 display (window list, focus, geometry).
+
+    Provides a high-level view of the root window and its children.
+
+    Args:
+        display: An open ``Xlib.display.Display`` connection.
+
+    Example:
+        >>> screen = Screen(display)
+        >>> for win in screen.windows():
+        ...     print(win.title)
+    """
 
     def __init__(self, display: Display):
         self._display = display
 
     @property
     def geometry(self) -> Geometry:
+        """Return the root window geometry (the full screen area).
+
+        Returns:
+            A :class:`~xdrive.geometry.Geometry` with ``x=0, y=0`` and
+            the root window's width and height.
+        """
         root = self._display.screen().root
         geo = root.get_geometry()
         return Geometry(x=0, y=0, width=geo.width, height=geo.height)
 
     def windows(self) -> list[Window]:
-        """Return all managed (mapped, non-override-redirect) top-level windows."""
+        """Return all managed top-level windows.
+
+        Prefers the EWMH ``_NET_CLIENT_LIST`` property on the root
+        window.  Falls back to querying root children and filtering out
+        unmapped and override-redirect windows.
+
+        Returns:
+            List of :class:`~xdrive.window.Window` objects.
+        """
         root = self._display.screen().root
 
         # Try _NET_CLIENT_LIST first
@@ -56,7 +81,12 @@ class Screen:
         return result
 
     def focused_window(self) -> Window | None:
-        """Return the currently focused window, or None."""
+        """Return the window that currently holds input focus.
+
+        Returns:
+            The focused :class:`~xdrive.window.Window`, or ``None`` if
+            the root window has focus (i.e. no client is focused).
+        """
         focused = self._display.get_input_focus().focus
         if hasattr(focused, "id"):
             root = self._display.screen().root
@@ -66,7 +96,19 @@ class Screen:
         return None
 
     def window_at(self, x: int, y: int) -> Window | None:
-        """Return the window under the given coordinates."""
+        """Return the top-most mapped window at the given root coordinates.
+
+        Uses ``query_pointer`` first, then falls back to iterating root
+        children back-to-front.
+
+        Args:
+            x: Horizontal root-window coordinate.
+            y: Vertical root-window coordinate.
+
+        Returns:
+            The :class:`~xdrive.window.Window` under the point, or
+            ``None``.
+        """
         root = self._display.screen().root
         # Use translate_coords to find the child at position
         result = root.query_pointer()
@@ -99,7 +141,14 @@ class Screen:
         return None
 
     def window_tree(self) -> dict:
-        """Return the full X11 window hierarchy as a nested dict."""
+        """Return the full X11 window hierarchy as a nested dict.
+
+        Each node has keys ``'id'``, ``'name'``, ``'children'``, and
+        optionally ``'geometry'``.
+
+        Returns:
+            A recursively nested dict rooted at the root window.
+        """
         root = self._display.screen().root
         return self._build_tree(root)
 
