@@ -31,7 +31,7 @@ Testing an X11 window manager means controlling real windows at the protocol lev
 
 - **Headless by default**: `VirtualDisplay` wraps Xvfb; pick a free display automatically
 - **Simulate keyboard inputs**: Keyboard and mouse events can be simulated via XTest
-**Playwright-style assertions**:  `expect(win).to_have_geometry(width=640)` with clear failure messages
+- **Playwright-style assertions**:  `expect(win).to_have_geometry(width=640)` with clear failure messages
 - **pytest-native**: drop-in session fixture; zero boilerplate in individual tests
 
 ---
