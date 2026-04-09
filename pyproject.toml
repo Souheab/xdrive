@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "xdrive"
 version = "0.1.0"
 description = "X11 window manager automation and testing framework"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "python-xlib>=0.33",
