@@ -1,4 +1,4 @@
-yamlversion: 2
+version: 2
 build:
   os: ubuntu-24.04
   tools:
