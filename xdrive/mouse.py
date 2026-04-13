@@ -174,6 +174,38 @@ class Mouse:
         xtest.fake_input(self._display, X.ButtonRelease, btn)
         self._display.flush()
 
+    def _move_stepped(
+        self,
+        sx: int,
+        sy: int,
+        ex: int,
+        ey: int,
+        steps: int,
+        step_delay: float,
+    ) -> None:
+        """Move the pointer from (sx, sy) to (ex, ey) in incremental steps.
+
+        Used internally by :meth:`drag` to generate intermediate
+        ``MotionNotify`` events so that grab-aware window managers can
+        detect a drag gesture.
+
+        Args:
+            sx: Start X coordinate.
+            sy: Start Y coordinate.
+            ex: End X coordinate.
+            ey: End Y coordinate.
+            steps: Number of intermediate positions.
+            step_delay: Pause between each step in seconds.
+        """
+        if steps <= 1:
+            self.move(ex, ey)
+            return
+        dx = (ex - sx) / steps
+        dy = (ey - sy) / steps
+        for i in range(1, steps + 1):
+            self.move(int(sx + dx * i), int(sy + dy * i))
+            time.sleep(step_delay)
+
     def drag(
         self,
         start_or_window=None,
@@ -184,6 +216,8 @@ class Mouse:
         to_x: int | None = None,
         to_y: int | None = None,
         button: int = 1,
+        steps: int = 1,
+        step_delay: float = 0.01,
     ) -> None:
         """Drag from one position to another.
 
@@ -192,6 +226,12 @@ class Mouse:
         * ``drag(start_x, start_y, end_x, end_y)`` — absolute coords.
         * ``drag(window, to_x=x, to_y=y)`` — from window centre to
           absolute coords.
+
+        The ``steps`` parameter controls how many intermediate pointer
+        positions are generated between start and end.  Setting
+        ``steps > 1`` is important when testing grab-aware window
+        managers that require ``MotionNotify`` events to recognise a
+        drag gesture.
 
         Args:
             start_or_window: Starting X coordinate **or** a
@@ -202,23 +242,34 @@ class Mouse:
             to_x: Destination X (keyword form).
             to_y: Destination Y (keyword form).
             button: X11 button number to hold during the drag.
+            steps: Number of intermediate pointer positions to generate
+                between start and end.  Values greater than 1 produce a
+                series of ``MotionNotify`` events which grab-aware WMs
+                need in order to detect drag gestures.  Defaults to
+                ``1`` (single direct move, matching previous behaviour).
+            step_delay: Pause in seconds between each intermediate step
+                when *steps* > 1.  Defaults to ``0.01``.
 
         Raises:
             ValueError: If the arguments don't match either form.
 
         Example:
             >>> mouse.drag(win.frame, to_x=200, to_y=200)
+            >>> mouse.drag(50, 50, 300, 300, steps=20, step_delay=0.015)
         """
         from .window import Window
 
         if isinstance(start_or_window, Window):
             # drag(window, to_x=..., to_y=...)
+            geo = start_or_window.geometry
+            sx = geo.x + geo.width // 2
+            sy = geo.y + geo.height // 2
             self.move_to(start_or_window)
             time.sleep(0.02)
             self.down(button)
             time.sleep(0.02)
             if to_x is not None and to_y is not None:
-                self.move(to_x, to_y)
+                self._move_stepped(sx, sy, to_x, to_y, steps, step_delay)
             time.sleep(0.02)
             self.up(button)
         else:
@@ -235,7 +286,7 @@ class Mouse:
             time.sleep(0.02)
             self.down(button)
             time.sleep(0.02)
-            self.move(ex, ey)
+            self._move_stepped(sx, sy, ex, ey, steps, step_delay)
             time.sleep(0.02)
             self.up(button)
 
